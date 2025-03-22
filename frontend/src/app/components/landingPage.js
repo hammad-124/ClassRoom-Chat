@@ -45,7 +45,7 @@ export default function LandingPage() {
           initial={{ opacity: 0, x: 50 }} 
           animate={{ opacity: 1, x: 0 }} 
           transition={{ duration: 1.2 }} 
-          className="hidden md:block w-full md:w-1/2 flex justify-center"
+          className="hidden md:block w-full md:w-1/2  justify-center"
         >
           <Image 
             src="/images/background-removebg.png" 
