@@ -16,7 +16,15 @@ app.use(express.urlencoded({limit:"40kb",extended:true}))
 app.set("port",(process.env.PORT || 8000));
 
 
+
 app.use("/api/v1/users",userRoutes);
+
+app.use((err, req, res, next) => {
+    res.status(err.statusCode || 500).json({
+      success: false,
+      message: err.message || "Internal Server Error",
+    });
+  });
 
 const start =async()=>{
     const connectiondb = await mongoose.connect("mongodb://localhost:27017/classRoomChat");

@@ -17,7 +17,7 @@ export const registerUser = asyncWrapper(async (req, res,next) => {
     }
     const user = await User.create({name, username, password});
     await user.save();
-    res.status(httpStatus.CREATED).json({success: true, mesage:"User regiser successfully!"});
+    res.status(httpStatus.CREATED).json({success: true, message:"User regiser successfully!"});
 });
 
 export const loginUser = asyncWrapper(async(req,res,next)=>{
