@@ -14,7 +14,7 @@ export const connectToSocket = (server) =>{
     });
 
     io.on("connection",(socket)=>{
-
+      console.log("socket says : Something connected!")
         socket.on("join-call",(path)=>{
          if(connections[path] === undefined){
             connections[path]=[]
@@ -60,25 +60,56 @@ export const connectToSocket = (server) =>{
             })
         }
         })
-        socket.on("disconnect",()=>{
-           var diffTime = Math.abs(timeOnline[socket.id] - new Date())
-           var key;
-           for (const[k,v] of JSON.parse(JSON.stringify(Object.entries(connections)))){
-            for(let a= 0 ;a<v.length;++a){
-              if(v[a] === socket.id){
-                key=k;
-                for(let a=0;a<connections[key].length;a++){
-                    io.to(connections[key][a].emit("user-left",socket.id))
+        // socket.on("disconnect",()=>{
+        //    var diffTime = Math.abs(timeOnline[socket.id] - new Date())
+        //    var key;
+        //    for (const[k,v] of JSON.parse(JSON.stringify(Object.entries(connections)))){
+        //     for(let a= 0 ;a<v.length;++a){
+        //       if(v[a] === socket.id){
+        //         key=k;
+        //         for(let a=0;a<connections[key].length;a++){
+        //             io.to(connections[key][a].emit("user-left",socket.id))
+        //         }
+        //         var index = connections[key].indexOf(socket.id);
+        //         connections[key].splice(index,1)
+        //         if(connections[key] === 0){
+        //             delete connections[key];
+        //         }
+        //       }
+        //     }
+        //    }
+        // })
+        socket.on("disconnect", () => {
+            var diffTime = Math.abs(timeOnline[socket.id] - new Date());
+            var key;
+        
+            for (const [k, v] of Object.entries(connections)) {
+                for (let a = 0; a < v.length; ++a) {
+                    if (v[a] === socket.id) {
+                        key = k;
+                        
+                        // Notify all users in the same room about the disconnection
+                        for (let a = 0; a < connections[key].length; a++) {
+                            io.to(connections[key][a]).emit("user-left", socket.id);
+                        }
+        
+                        // Remove the disconnected user from the room
+                        var index = connections[key].indexOf(socket.id);
+                        if (index !== -1) {
+                            connections[key].splice(index, 1);
+                        }
+        
+                        // If the room is empty, remove it from `connections`
+                        if (connections[key].length === 0) {
+                            delete connections[key];
+                        }
+        
+                        break; // Stop searching once found
+                    }
                 }
-                var index = connections[key].indexOf(socket.id);
-                connections[key].splice(index,1)
-                if(connections[key] === 0){
-                    delete connections[key];
-                }
-              }
             }
-           }
-        })
+        });
+        
     })
     return io;
 
