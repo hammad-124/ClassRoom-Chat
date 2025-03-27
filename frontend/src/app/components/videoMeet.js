@@ -30,7 +30,6 @@ const VideoMeet = () => {
   const [askForUserName, setAskForUserName] = useState(true);
   const [roomId, setRoomId] = useState("");
 
-  // Initialize component
   useEffect(() => {
     const path = window.location.pathname;
     const extractedRoomId = path.substring(path.lastIndexOf("/") + 1) || window.location.href;
@@ -44,7 +43,6 @@ const VideoMeet = () => {
     };
   }, []);
 
-  // Update media when toggles change
   useEffect(() => {
     if (video !== undefined && audio !== undefined) getUserMedia();
   }, [video, audio]);
@@ -53,7 +51,6 @@ const VideoMeet = () => {
     if (screen !== undefined) getDisplayMedia();
   }, [screen]);
 
-  // Get permissions
   const getPermissions = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -69,7 +66,6 @@ const VideoMeet = () => {
     }
   };
 
-  // Get user media (camera/mic)
   const getUserMedia = () => {
     if ((video && videoAvailable) || (audio && audioAvailable)) {
       navigator.mediaDevices
@@ -93,12 +89,14 @@ const VideoMeet = () => {
 
     for (let id in connections.current) {
       if (id === socketIdRef.current) continue;
-      window.localStream.getTracks().forEach((track) => connections.current[id].addTrack(track, stream));
-      createOffer(id);
+      updateTracks(id, stream);
+      // Only create offer if negotiation is needed
+      if (connections.current[id].signalingState === "stable") {
+        createOffer(id);
+      }
     }
   };
 
-  // Get display media (screen sharing)
   const getDisplayMedia = () => {
     if (screen && navigator.mediaDevices.getDisplayMedia) {
       navigator.mediaDevices
@@ -119,8 +117,10 @@ const VideoMeet = () => {
 
     for (let id in connections.current) {
       if (id === socketIdRef.current) continue;
-      window.localStream.getTracks().forEach((track) => connections.current[id].addTrack(track, stream));
-      createOffer(id);
+      updateTracks(id, stream);
+      if (connections.current[id].signalingState === "stable") {
+        createOffer(id);
+      }
     }
 
     stream.getTracks().forEach((track) => {
@@ -132,24 +132,56 @@ const VideoMeet = () => {
     });
   };
 
-  // Handle signaling
+  const updateTracks = (socketId, stream) => {
+    const peerConnection = connections.current[socketId];
+    if (!peerConnection) return;
+
+    const senders = peerConnection.getSenders();
+    stream.getTracks().forEach((track) => {
+      const existingSender = senders.find((sender) => sender.track && sender.track.kind === track.kind);
+      if (existingSender) {
+        existingSender.replaceTrack(track).then(() => {
+          console.log(`Replaced ${track.kind} track for ${socketId}`);
+        }).catch((e) => console.error(`Error replacing ${track.kind} track:`, e));
+      } else {
+        peerConnection.addTrack(track, stream);
+        console.log(`Added new ${track.kind} track for ${socketId}`);
+      }
+    });
+  };
+
   const handleSignal = (fromId, message) => {
     console.log("Received signal from", fromId, message);
     const signal = JSON.parse(message);
     if (fromId === socketIdRef.current) return;
 
-    if (!connections.current[fromId]) createPeerConnection(fromId);
+    const peerConnection = connections.current[fromId];
+    if (!peerConnection) return;
+
+    const signalingState = peerConnection.signalingState;
+    console.log(`Signaling state for ${fromId}: ${signalingState}`);
 
     if (signal.sdp) {
-      connections.current[fromId]
+      if (signal.sdp.type === "offer" && signalingState !== "stable") {
+        console.warn(`Ignoring offer in state ${signalingState}`);
+        return;
+      }
+      if (signal.sdp.type === "answer" && signalingState !== "have-local-offer") {
+        console.warn(`Ignoring answer in state ${signalingState}`);
+        return;
+      }
+
+      peerConnection
         .setRemoteDescription(new RTCSessionDescription(signal.sdp))
         .then(() => {
+          console.log(`Set remote ${signal.sdp.type} for ${fromId}`);
           if (signal.sdp.type === "offer") {
-            connections.current[fromId]
+            peerConnection
               .createAnswer()
               .then((description) => {
-                connections.current[fromId].setLocalDescription(description).then(() => {
+                peerConnection.setLocalDescription(description).then(() => {
                   socketRef.current.emit("signals", fromId, JSON.stringify({ sdp: description }));
+                  console.log(`Sent answer to ${fromId}`);
                 });
               })
               .catch((e) => console.error("Error creating answer:", e));
@@ -157,14 +189,14 @@ const VideoMeet = () => {
         })
         .catch((e) => console.error("Error setting remote description:", e));
     }
+
     if (signal.ice) {
-      connections.current[fromId]
+      peerConnection
         .addIceCandidate(new RTCIceCandidate(signal.ice))
         .catch((e) => console.error("Error adding ICE candidate:", e));
     }
   };
 
-  // Create peer connection
   const createPeerConnection = (socketId) => {
     console.log("Creating peer connection for:", socketId);
     connections.current[socketId] = new RTCPeerConnection(peerConfigConnection);
@@ -185,25 +217,35 @@ const VideoMeet = () => {
       });
     };
 
+    connections.current[socketId].onnegotiationneeded = () => {
+      if (connections.current[socketId].signalingState === "stable") {
+        createOffer(socketId);
+      }
+    };
+
     if (window.localStream) {
-      window.localStream.getTracks().forEach((track) => {
-        connections.current[socketId].addTrack(track, window.localStream);
-      });
+      updateTracks(socketId, window.localStream);
     }
   };
 
   const createOffer = (socketId) => {
-    connections.current[socketId]
+    const peerConnection = connections.current[socketId];
+    if (!peerConnection || peerConnection.signalingState !== "stable") {
+      console.log(`Skipping offer creation for ${socketId} in state ${peerConnection?.signalingState}`);
+      return;
+    }
+
+    peerConnection
       .createOffer()
       .then((description) => {
-        connections.current[socketId].setLocalDescription(description).then(() => {
+        peerConnection.setLocalDescription(description).then(() => {
           socketRef.current.emit("signals", socketId, JSON.stringify({ sdp: description }));
+          console.log(`Sent offer to ${socketId}`);
         });
       })
       .catch((e) => console.error("Error creating offer:", e));
   };
 
-  // Socket connection
   const connectToSocketServer = () => {
     socketRef.current = io.connect(server_url, { secure: false });
     socketRef.current.on("connect", () => {
@@ -221,9 +263,12 @@ const VideoMeet = () => {
         createPeerConnection(clientId);
       });
 
-      if (id !== socketIdRef.current && connections.current[id]) {
-        window.localStream.getTracks().forEach((track) => connections.current[id].addTrack(track, window.localStream));
-        createOffer(id);
+      if (id !== socketIdRef.current && connections.current[id] && window.localStream) {
+        updateTracks(id, window.localStream);
+        // Offer only if stable
+        if (connections.current[id].signalingState === "stable") {
+          createOffer(id);
+        }
       }
     });
 
@@ -237,7 +282,6 @@ const VideoMeet = () => {
     });
   };
 
-  // Toggle controls
   const toggleVideo = () => {
     if (window.localStream) {
       window.localStream.getVideoTracks().forEach((track) => {
@@ -260,7 +304,6 @@ const VideoMeet = () => {
     setScreen(!screen);
   };
 
-  // Start meeting
   const startMeeting = () => {
     setAskForUserName(false);
     getUserMedia();
@@ -269,7 +312,6 @@ const VideoMeet = () => {
 
   const uniqueVideos = Array.from(new Map(videos.map((v) => [v.socketId, v])).values());
 
-  // Render
   return (
     <div style={{ fontFamily: "Arial, sans-serif" }}>
       {askForUserName ? (
